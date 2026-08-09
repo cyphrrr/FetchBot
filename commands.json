@@ -1,0 +1,18 @@
+{
+  "hallo": {
+    "description": "Sagt Hallo.",
+    "replies": [
+      "Hallo! 👋",
+      "Na, alles gut?",
+      "Hey!"
+    ]
+  },
+  "high5": {
+    "description": "Gib jemandem ein High Five.",
+    "target": true,
+    "replies": [
+      "✋ High five, {ziel}!",
+      "{ziel} — *klatsch* 🙌"
+    ]
+  }
+}

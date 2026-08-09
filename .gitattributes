@@ -1,0 +1,9 @@
+# Dieses Projekt laeuft in Linux-Containern: LF-Zeilenenden erzwingen,
+# damit z.B. entrypoint.sh nicht durch CRLF unbrauchbar wird.
+* text=auto eol=lf
+
+# Shell-Scripts immer LF, egal auf welchem OS ausgecheckt wird.
+*.sh text eol=lf
+
+# Bilder als binaer behandeln (keine Zeilenenden-Umwandlung).
+*.png binary

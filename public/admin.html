@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bot Admin</title>
+<style>
+  :root {
+    --bg: #1e1f22; --surface: #2b2d31; --surface2: #313338; --border: #3f4147;
+    --text: #dbdee1; --muted: #949ba4; --accent: #5865f2; --accent-hover: #4752c4;
+    --danger: #f23f43; --success: #23a55a; --warn: #f0b232; --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text); min-height: 100vh; display: flex;
+    font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  /* --- Sidebar --- */
+  nav {
+    width: 220px; min-height: 100vh; background: var(--surface); padding: 16px 8px;
+    border-right: 1px solid var(--border); flex-shrink: 0;
+    display: flex; flex-direction: column;
+  }
+  #logoutBtn { margin-top: auto; }
+  nav h1 { font-size: 17px; padding: 8px 12px 16px; display: flex; align-items: center; gap: 8px; }
+  nav button {
+    display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px;
+    background: none; border: 0; border-radius: var(--radius); color: var(--muted);
+    font: inherit; cursor: pointer; text-align: left;
+  }
+  nav button:hover { background: var(--surface2); color: var(--text); }
+  nav button.active { background: var(--accent); color: #fff; }
+  /* --- Hauptbereich --- */
+  main { flex: 1; padding: 28px 32px; max-width: 900px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+  header h2 { font-size: 20px; }
+  .chip {
+    font-size: 13px; padding: 3px 10px; border-radius: 99px; background: var(--surface);
+    border: 1px solid var(--border); color: var(--muted); display: inline-flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+  .dot.on { background: var(--success); }
+  /* --- Karten / Liste --- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: center; gap: 14px;
+  }
+  .card .info { flex: 1; min-width: 0; }
+  .card .name { font-weight: 600; font-family: ui-monospace, Consolas, monospace; }
+  .card .desc { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 99px; flex-shrink: 0;
+    background: rgba(88, 101, 242, .2); color: #a5b0ff; border: 1px solid rgba(88, 101, 242, .4);
+  }
+  .badge.code { background: rgba(240, 178, 50, .15); color: var(--warn); border-color: rgba(240, 178, 50, .4); }
+  .count { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  button.btn {
+    padding: 7px 14px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface2); color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+  }
+  button.btn:hover { border-color: var(--muted); }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.btn.primary:hover { background: var(--accent-hover); }
+  button.btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+  button.btn:disabled { opacity: .5; cursor: not-allowed; }
+  .section-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; margin: 22px 0 8px; }
+  /* --- Editor (Modal) --- */
+  dialog {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; width: min(560px, 92vw); margin: auto;
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, .6); }
+  dialog h3 { margin-bottom: 18px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 4px; }
+  input[type=text], textarea, select {
+    width: 100%; padding: 9px 11px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius); font: inherit;
+  }
+  input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  select:disabled { opacity: .5; cursor: not-allowed; }
+  .reply-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .reply-row input { flex: 1; }
+  .reply-row button { flex-shrink: 0; }
+  /* --- Rollenverteilung: Emoji→Rolle-Zeilen --- */
+  .map-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .map-row .map-emoji { flex: 0 0 84px; text-align: center; }
+  .map-row select { flex: 1; min-width: 0; }
+  .map-row button { flex-shrink: 0; }
+  /* --- Rollenverteilung: Embed-Live-Vorschau (Discord-Look) --- */
+  .embed-preview {
+    background: #2b2d31; border-left: 4px solid var(--embed-color, #9146ff); border-radius: 4px;
+    padding: 12px 16px; margin-top: 8px; max-width: 460px;
+  }
+  .ep-title { font-weight: 600; color: #fff; margin-bottom: 6px; }
+  .ep-desc { color: var(--text); font-size: 14px; white-space: normal; word-break: break-word; }
+  .ep-desc code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .ep-desc a { color: #00a8fc; text-decoration: none; }
+  .ep-field-name { font-weight: 600; color: #fff; font-size: 13px; margin-top: 10px; }
+  .ep-field-val { color: var(--text); font-size: 14px; margin-top: 2px; }
+  .ep-role { color: #c9cdfb; background: rgba(88, 101, 242, .15); padding: 0 3px; border-radius: 3px; }
+  .ep-footer { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .error-msg { color: var(--danger); font-size: 13px; margin-top: 12px; min-height: 20px; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 14px; color: var(--text); }
+  .check input { width: 16px; height: 16px; accent-color: var(--accent); }
+  /* --- Status-Seite --- */
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; }
+  dt { color: var(--muted); }
+  dd { font-family: ui-monospace, Consolas, monospace; font-size: 14px; word-break: break-all; }
+  /* --- Toast --- */
+  #toasts { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }
+  .toast {
+    background: var(--surface2); border: 1px solid var(--border); border-left: 4px solid var(--success);
+    border-radius: var(--radius); padding: 11px 16px; max-width: 380px; font-size: 14px;
+    animation: slidein .15s ease-out;
+  }
+  .toast.err { border-left-color: var(--danger); }
+  .toast.warn { border-left-color: var(--warn); }
+  @keyframes slidein { from { transform: translateX(30px); opacity: 0; } }
+  .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+</style>
+</head>
+<body>
+<nav>
+  <h1><span id="botEmoji">🤖</span> <span id="botName">Bot Admin</span></h1>
+  <div id="navButtons"></div>
+  <button id="logoutBtn">🚪 Abmelden</button>
+</nav>
+<main>
+  <header>
+    <h2 id="pageTitle"></h2>
+    <span class="chip"><span class="dot" id="statusDot"></span><span id="statusText">lade …</span></span>
+  </header>
+  <div id="page"></div>
+</main>
+
+<dialog id="editor">
+  <h3 id="editorTitle"></h3>
+  <form method="dialog" onsubmit="return false">
+    <label for="fName">Befehlsname</label>
+    <input type="text" id="fName" autocomplete="off" spellcheck="false" placeholder="z.B. hallo">
+    <div class="hint">Nur a–z, 0–9, - und _ · max 32 Zeichen · wird zu /name</div>
+
+    <label for="fDesc">Beschreibung <span id="descCount"></span></label>
+    <input type="text" id="fDesc" autocomplete="off" maxlength="100" placeholder="Wird in Discord unter dem Befehl angezeigt">
+
+    <div class="check">
+      <input type="checkbox" id="fTarget">
+      <label for="fTarget" style="margin:0; color:var(--text)">Befehl richtet sich an jemanden (@user-Pflichtfeld)</label>
+    </div>
+    <div class="hint" id="targetHint" hidden>Schreibe <b>{ziel}</b> in die Antworten — dort erscheint die Erwähnung.</div>
+
+    <label>Antworten (eine wird zufällig gewählt)</label>
+    <div id="replyRows"></div>
+    <button type="button" class="btn" id="addReply">+ Antwort</button>
+
+    <div class="error-msg" id="editorError"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="cancelBtn">Abbrechen</button>
+      <button type="button" class="btn primary" id="saveBtn">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toasts"></div>
+
+<script>
+'use strict';
+
+// ============================================================
+// API-Helfer — der Custom-Header ist der CSRF-Schutz.
+// ============================================================
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'fetch',
+      ...options.headers,
+    },
+  });
+  // Session weg/abgelaufen -> zurück zur Login-Maske.
+  if (res.status === 401) { location.href = '/login'; throw new Error('Sitzung abgelaufen'); }
+  let body = null;
+  try { body = await res.json(); } catch { /* leere Antwort */ }
+  if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+  return body;
+}
+
+function toast(msg, kind = 'ok') {
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind === 'err' ? ' err' : kind === 'warn' ? ' warn' : '');
+  el.textContent = msg;
+  document.getElementById('toasts').append(el);
+  setTimeout(() => el.remove(), 5000);
+}
+
+// Nach dem Speichern: Erfolg + Registrierungsstatus in einem Rutsch melden.
+function reportSave(result, what) {
+  const reg = result.registration;
+  if (reg?.ok) toast(`${what} — bei Discord registriert`);
+  else toast(`${what} — Registrierung fehlgeschlagen: ${reg?.error ?? 'unbekannt'}`, 'warn');
+}
+
+// ============================================================
+// MODULE — neue Seiten hier registrieren:
+// { id, title, icon, render(container) }. Mehr ist nicht nötig,
+// Navigation und Routing laufen automatisch.
+// ============================================================
+const MODULES = [
+  { id: 'commands', title: 'Befehle', icon: '💬', render: renderCommands },
+  { id: 'ansage', title: 'Live-Ansage', icon: '📣', render: renderAnnounce },
+  { id: 'rollen', title: 'Rollenverteilung', icon: '🎭', render: renderDistributors },
+  { id: 'status', title: 'Status', icon: '📡', render: renderStatus },
+];
+
+const navBox = document.getElementById('navButtons');
+for (const mod of MODULES) {
+  const btn = document.createElement('button');
+  btn.append(mod.icon + ' ', mod.title);
+  btn.id = 'nav-' + mod.id;
+  btn.onclick = () => { location.hash = '#/' + mod.id; };
+  navBox.append(btn);
+}
+
+async function route() {
+  const id = (location.hash.replace('#/', '') || 'commands');
+  const mod = MODULES.find((m) => m.id === id) ?? MODULES[0];
+  for (const m of MODULES) {
+    document.getElementById('nav-' + m.id).classList.toggle('active', m.id === mod.id);
+  }
+  document.getElementById('pageTitle').textContent = mod.title;
+  const page = document.getElementById('page');
+  page.replaceChildren();
+  await mod.render(page);
+}
+window.addEventListener('hashchange', route);
+
+// ============================================================
+// Branding: Name/Emoji/Farbe aus /api/brand (öffentlich, ohne Login).
+// BRAND_NAME (falls gesetzt) gewinnt über den live gelesenen Bot-Namen.
+// ============================================================
+let brandName = '';
+async function applyBrand() {
+  try {
+    const res = await fetch('/api/brand', { headers: { 'X-Requested-With': 'fetch' } });
+    const b = await res.json();
+    brandName = b.name || '';
+    if (b.emoji) document.getElementById('botEmoji').textContent = b.emoji;
+    if (b.color) document.documentElement.style.setProperty('--embed-color', b.color);
+    const title = brandName || 'Bot Admin';
+    document.title = title;
+    if (brandName) document.getElementById('botName').textContent = brandName;
+  } catch { /* Branding ist Kosmetik — Fehler ignorieren */ }
+}
+
+// ============================================================
+// Kopfzeile: Bot-Status
+// ============================================================
+async function refreshStatus() {
+  try {
+    const s = await api('/api/status');
+    document.getElementById('botName').textContent = brandName || s.bot || 'Bot Admin';
+    document.getElementById('statusDot').classList.toggle('on', s.ready);
+    document.getElementById('statusText').textContent = s.ready
+      ? `online · ${s.counts.text + s.counts.code} Befehle`
+      : 'nicht verbunden';
+    return s;
+  } catch (err) {
+    document.getElementById('statusText').textContent = 'Status-Fehler';
+    throw err;
+  }
+}
+
+// ============================================================
+// Modul: Befehle
+// ============================================================
+let rules = { nameRule: '^[a-z0-9_-]{1,32}$', descriptionMax: 100, replyMax: 1900, targetToken: '{ziel}' };
+
+async function renderCommands(page) {
+  const data = await api('/api/commands');
+  rules = data.rules;
+
+  const top = document.createElement('div');
+  top.style.marginBottom = '14px';
+  const newBtn = document.createElement('button');
+  newBtn.className = 'btn primary';
+  newBtn.textContent = '+ Neuer Befehl';
+  newBtn.onclick = () => openEditor(null, null);
+  top.append(newBtn);
+  page.append(top);
+
+  const names = Object.keys(data.commands);
+  if (names.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Noch keine Textbefehle. Leg den ersten an!';
+    page.append(empty);
+  }
+
+  for (const name of names) {
+    const entry = data.commands[name];
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const info = document.createElement('div');
+    info.className = 'info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'name';
+    nameEl.textContent = '/' + name;
+    const descEl = document.createElement('div');
+    descEl.className = 'desc';
+    descEl.textContent = entry.description;
+    info.append(nameEl, descEl);
+    card.append(info);
+
+    if (entry.target) {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = '@ Ziel';
+      card.append(badge);
+    }
+
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = entry.replies.length + (entry.replies.length === 1 ? ' Antwort' : ' Antworten');
+    card.append(count);
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn';
+    editBtn.textContent = 'Bearbeiten';
+    editBtn.onclick = () => openEditor(name, entry);
+    card.append(editBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn danger';
+    delBtn.textContent = 'Löschen';
+    delBtn.onclick = async () => {
+      if (!confirm(`/${name} wirklich löschen?`)) return;
+      try {
+        const result = await api('/api/commands/' + encodeURIComponent(name), { method: 'DELETE' });
+        reportSave(result, `/${name} gelöscht`);
+        await refreshStatus();
+        await route();
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    };
+    card.append(delBtn);
+
+    page.append(card);
+  }
+
+  if (data.code.length > 0) {
+    const label = document.createElement('div');
+    label.className = 'section-label';
+    label.textContent = 'Im Code definiert (hier nicht änderbar)';
+    page.append(label);
+    for (const c of data.code) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      const info = document.createElement('div');
+      info.className = 'info';
+      const nameEl = document.createElement('div');
+      nameEl.className = 'name';
+      nameEl.textContent = '/' + c.name;
+      const descEl = document.createElement('div');
+      descEl.className = 'desc';
+      descEl.textContent = c.description;
+      info.append(nameEl, descEl);
+      const badge = document.createElement('span');
+      badge.className = 'badge code';
+      badge.textContent = 'Code';
+      card.append(info, badge);
+      page.append(card);
+    }
+  }
+}
+
+// ============================================================
+// Editor-Dialog
+// ============================================================
+const editor = document.getElementById('editor');
+const fName = document.getElementById('fName');
+const fDesc = document.getElementById('fDesc');
+const fTarget = document.getElementById('fTarget');
+const replyRows = document.getElementById('replyRows');
+const editorError = document.getElementById('editorError');
+let editingName = null; // null = neu anlegen
+
+function addReplyRow(value = '') {
+  const row = document.createElement('div');
+  row.className = 'reply-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = value;
+  input.placeholder = fTarget.checked ? '*winkt {ziel} zu*' : '*eine mögliche Antwort*';
+  const rm = document.createElement('button');
+  rm.type = 'button';
+  rm.className = 'btn danger';
+  rm.textContent = '✕';
+  rm.title = 'Antwort entfernen';
+  rm.onclick = () => row.remove();
+  row.append(input, rm);
+  replyRows.append(row);
+}
+
+document.getElementById('addReply').onclick = () => addReplyRow();
+fTarget.onchange = () => { document.getElementById('targetHint').hidden = !fTarget.checked; };
+fName.oninput = () => { fName.value = fName.value.toLowerCase(); };
+fDesc.oninput = () => {
+  document.getElementById('descCount').textContent = `(${fDesc.value.length}/${rules.descriptionMax})`;
+};
+
+function openEditor(name, entry) {
+  editingName = name;
+  document.getElementById('editorTitle').textContent = name ? `/${name} bearbeiten` : 'Neuer Befehl';
+  fName.value = name ?? '';
+  fDesc.value = entry?.description ?? '';
+  fDesc.oninput();
+  fTarget.checked = entry?.target === true;
+  fTarget.onchange();
+  replyRows.replaceChildren();
+  for (const r of entry?.replies ?? ['']) addReplyRow(r);
+  editorError.textContent = '';
+  editor.showModal();
+}
+
+document.getElementById('cancelBtn').onclick = () => editor.close();
+
+// Client-seitige Prüfung spiegelt die Server-Regeln — der Server prüft trotzdem nochmal.
+function validateForm() {
+  const name = fName.value.trim();
+  const description = fDesc.value.trim();
+  const replies = [...replyRows.querySelectorAll('input')].map((i) => i.value).filter((v) => v.trim());
+  const target = fTarget.checked;
+  const usesToken = replies.some((r) => r.includes(rules.targetToken));
+
+  if (!new RegExp(rules.nameRule).test(name)) return { error: 'Name: nur a-z, 0-9, - und _, max 32 Zeichen' };
+  if (!description) return { error: 'Beschreibung fehlt' };
+  if (description.length > rules.descriptionMax) return { error: `Beschreibung: max ${rules.descriptionMax} Zeichen` };
+  if (replies.length === 0) return { error: 'Mindestens eine Antwort angeben' };
+  if (replies.some((r) => r.length > rules.replyMax)) return { error: `Antworten: max ${rules.replyMax} Zeichen` };
+  if (target && !usesToken) return { error: `Ziel ist aktiv, aber ${rules.targetToken} kommt in keiner Antwort vor` };
+  if (!target && usesToken) return { error: `${rules.targetToken} benutzt — dann muss "richtet sich an jemanden" aktiv sein` };
+
+  return { value: { name, description, ...(target && { target: true }), replies } };
+}
+
+document.getElementById('saveBtn').onclick = async () => {
+  const { error, value } = validateForm();
+  if (error) {
+    editorError.textContent = error;
+    return;
+  }
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true;
+  try {
+    const result = editingName
+      ? await api('/api/commands/' + encodeURIComponent(editingName), { method: 'PUT', body: JSON.stringify(value) })
+      : await api('/api/commands', { method: 'POST', body: JSON.stringify(value) });
+    editor.close();
+    reportSave(result, `/${value.name} gespeichert`);
+    await refreshStatus();
+    await route();
+  } catch (err) {
+    editorError.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+// ============================================================
+// Modul: Live-Ansage (Mention der automatischen Ansage)
+// ============================================================
+async function renderAnnounce(page) {
+  const data = await api('/api/settings');
+  const current = data.settings.mention; // 'off' | 'everyone' | Rollen-ID
+  const roles = data.roles || [];
+
+  const state = {
+    mode: current === 'off' ? 'off' : current === 'everyone' ? 'everyone' : 'role',
+    roleId: (current !== 'off' && current !== 'everyone') ? current : (roles[0]?.id ?? ''),
+  };
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.style.display = 'block';
+
+  const intro = document.createElement('div');
+  intro.className = 'desc';
+  intro.style.whiteSpace = 'normal';
+  intro.style.marginBottom = '16px';
+  intro.textContent = 'Wen soll die automatische Live-Ansage anpingen, wenn der Stream startet?';
+  card.append(intro);
+
+  // Rollen-Dropdown vorab bauen — die Radios aktivieren/deaktivieren es.
+  const sel = document.createElement('select');
+  for (const r of roles) {
+    const o = document.createElement('option');
+    o.value = r.id;
+    o.textContent = '@' + r.name;
+    if (r.id === state.roleId) o.selected = true;
+    sel.append(o);
+  }
+  sel.onchange = () => { state.roleId = sel.value; };
+
+  const modes = [
+    { key: 'off', label: 'Kein Ping', hint: 'Nur die Nachricht — niemand wird benachrichtigt.' },
+    { key: 'everyone', label: '@everyone', hint: 'Pingt alle. Der Bot braucht dafür in Discord das Recht „Erwähnung von @everyone, @here und allen Rollen".' },
+    { key: 'role', label: 'Bestimmte Rolle', hint: roles.length ? 'Pingt nur diese Rolle (Bot braucht ggf. dasselbe Erwähnungs-Recht).' : 'Keine Rollen geladen — ist der Bot mit dem Server verbunden?' },
+  ];
+
+  for (const m of modes) {
+    const row = document.createElement('label');
+    row.className = 'check';
+    row.style.alignItems = 'flex-start';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'mention';
+    radio.checked = state.mode === m.key;
+    if (m.key === 'role' && roles.length === 0) radio.disabled = true;
+    radio.onchange = () => { if (radio.checked) { state.mode = m.key; sel.disabled = m.key !== 'role'; } };
+    const txt = document.createElement('div');
+    const strong = document.createElement('div');
+    strong.style.color = 'var(--text)';
+    strong.textContent = m.label;
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = m.hint;
+    txt.append(strong, hint);
+    row.append(radio, txt);
+    card.append(row);
+
+    // Dropdown direkt unter die Rollen-Option einhängen.
+    if (m.key === 'role') {
+      const wrap = document.createElement('div');
+      wrap.style.margin = '4px 0 0 26px';
+      wrap.append(sel);
+      card.append(wrap);
+    }
+  }
+  sel.disabled = state.mode !== 'role';
+
+  page.append(card);
+
+  const save = document.createElement('button');
+  save.className = 'btn primary';
+  save.style.marginTop = '14px';
+  save.textContent = 'Speichern';
+  save.onclick = async () => {
+    const mention = state.mode === 'role' ? state.roleId : state.mode;
+    if (state.mode === 'role' && !mention) { toast('Keine Rolle ausgewählt', 'err'); return; }
+    save.disabled = true;
+    try {
+      await api('/api/settings', { method: 'PUT', body: JSON.stringify({ mention }) });
+      toast('Live-Ansage gespeichert');
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      save.disabled = false;
+    }
+  };
+  page.append(save);
+}
+
+// ============================================================
+// Modul: Rollenverteilung (Reaction-Roles)
+// Sammelseite: Liste von Verteilern; jeder hat eine Nachricht mit mehreren
+// Emoji→Rolle-Zuordnungen. Editor mit Live-Vorschau des Embeds.
+// ============================================================
+
+// --- kleine DOM-Helfer (auch von der Vorschau genutzt) ---
+function rvInput(value, placeholder) {
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.autocomplete = 'off'; inp.spellcheck = false;
+  inp.value = value ?? '';
+  if (placeholder) inp.placeholder = placeholder;
+  return inp;
+}
+function rvTextarea(value, placeholder) {
+  const ta = document.createElement('textarea');
+  ta.rows = 6; ta.value = value ?? '';
+  if (placeholder) ta.placeholder = placeholder;
+  ta.style.resize = 'vertical'; ta.style.minHeight = '120px'; ta.style.lineHeight = '1.5';
+  return ta;
+}
+// Label mit Live-Zeichenzähler (x/max), an ein Control gebunden.
+function counterLabel(labelText, control, max) {
+  const l = document.createElement('label');
+  l.textContent = labelText + ' ';
+  const c = document.createElement('span');
+  c.style.color = 'var(--muted)';
+  const upd = () => { c.textContent = `(${control.value.length}/${max})`; };
+  l.append(c);
+  control.addEventListener('input', upd);
+  upd();
+  return l;
+}
+// Rollen-Dropdown für eine Zuordnungs-Zeile.
+function rvRoleSelect(roles, current) {
+  const sel = document.createElement('select');
+  const opt = (v, t, sel2) => { const o = document.createElement('option'); o.value = v; o.textContent = t; if (sel2) o.selected = true; sel.append(o); };
+  opt('', '— Rolle —', !current);
+  if (current && !roles.some((r) => r.id === current)) opt(current, `⚠️ ${current} (nicht gefunden)`, true);
+  for (const r of roles) opt(r.id, '@' + r.name, r.id === current);
+  return sel;
+}
+// Kanal-Dropdown mit ID-Fallback, wenn keine Kanäle geladen sind.
+function rvChannelPicker(channels, current) {
+  if (!channels.length) {
+    const inp = rvInput(current, 'Kanal-ID, z.B. 123456789012345678');
+    return { el: inp, get: () => inp.value.trim() };
+  }
+  const sel = document.createElement('select');
+  const opt = (v, t, sel2) => { const o = document.createElement('option'); o.value = v; o.textContent = t; if (sel2) o.selected = true; sel.append(o); };
+  opt('', '— Kanal wählen —', !current);
+  if (current && !channels.some((c) => c.id === current)) opt(current, `⚠️ ${current} (nicht gefunden)`, true);
+  for (const c of channels) opt(c.id, '#' + c.name, c.id === current);
+  return { el: sel, get: () => sel.value };
+}
+
+// --- Vorschau: sichere Markdown-Teilmenge → HTML ---
+function rvEscape(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function rvMarkdown(src) {
+  let s = rvEscape(src);                                   // zuerst escapen (kein HTML-Inject)
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`);
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  s = s.replace(/__([^_]+)__/g, '<u>$1</u>');
+  s = s.replace(/\*([^*]+)\*/g, '<i>$1</i>');
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  return s.replace(/\n/g, '<br>');
+}
+// Custom-Emoji im Preview als :name: zeigen (das Bild lädt der Browser hier nicht).
+function rvEmojiDisplay(e) {
+  const m = String(e).match(/^<a?:([^:]+):(\d+)>$/) || String(e).match(/^([^:]+):(\d+)$/);
+  return m ? `:${m[1]}:` : e;
+}
+
+// Baut die Embed-Vorschau (spiegelt buildDistributorEmbed im Bot).
+function buildPreview(model, roles) {
+  const roleName = (id) => { const r = roles.find((x) => x.id === id); return r ? '@' + r.name : (id ? '@' + id : '@—'); };
+  const box = document.createElement('div');
+  box.className = 'embed-preview';
+
+  if (model.title) {
+    const t = document.createElement('div');
+    t.className = 'ep-title';
+    t.textContent = model.title;            // Embed-Titel: kein Markdown (wie bei Discord)
+    box.append(t);
+  }
+  if (model.text) {
+    const d = document.createElement('div');
+    d.className = 'ep-desc';
+    d.innerHTML = rvMarkdown(model.text);
+    box.append(d);
+  }
+  const maps = model.mappings.filter((m) => m.emoji && m.roleId);
+  if (maps.length) {
+    const fn = document.createElement('div'); fn.className = 'ep-field-name'; fn.textContent = 'Reagiere für deine Rolle';
+    const fv = document.createElement('div'); fv.className = 'ep-field-val';
+    fv.innerHTML = maps.map((m) => `${rvEscape(rvEmojiDisplay(m.emoji))} → <span class="ep-role">${rvEscape(roleName(m.roleId))}</span>`).join('<br>');
+    box.append(fn, fv);
+  }
+  if (!model.title && !model.text && !maps.length) {
+    const empty = document.createElement('div');
+    empty.className = 'ep-desc'; empty.style.color = 'var(--muted)';
+    empty.textContent = '(leer — Titel, Text oder Zuordnungen eingeben)';
+    box.append(empty);
+  }
+  const foot = document.createElement('div'); foot.className = 'ep-footer';
+  foot.textContent = 'Reagiere unten, um dir eine Rolle zu geben.';
+  box.append(foot);
+  return box;
+}
+
+async function renderDistributors(page) {
+  const data = await api('/api/roledistributors');
+  showDistList(page, data);
+}
+
+function showDistList(page, data) {
+  page.replaceChildren();
+  const { distributors, channels } = data;
+  const chName = (id) => { const c = channels.find((x) => x.id === id); return c ? '#' + c.name : (id || '—'); };
+
+  const top = document.createElement('div');
+  top.style.marginBottom = '14px';
+  const newBtn = document.createElement('button');
+  newBtn.className = 'btn primary';
+  newBtn.textContent = '+ Neuer Verteiler';
+  newBtn.onclick = () => showDistEditor(page, data, null);
+  top.append(newBtn);
+  page.append(top);
+
+  if (!distributors.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Noch keine Rollenverteiler. Leg den ersten an!';
+    page.append(empty);
+    return;
+  }
+
+  for (const d of distributors) {
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const info = document.createElement('div');
+    info.className = 'info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'name'; nameEl.style.fontFamily = 'inherit';
+    nameEl.textContent = d.name;
+    const descEl = document.createElement('div');
+    descEl.className = 'desc';
+    const n = d.mappings.length;
+    descEl.textContent = `${chName(d.channelId)} · ${n} ${n === 1 ? 'Rolle' : 'Rollen'} · ${d.messageId ? 'gepostet' : 'noch nicht gepostet'}`;
+    info.append(nameEl, descEl);
+    card.append(info);
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn'; editBtn.textContent = 'Bearbeiten';
+    editBtn.onclick = () => showDistEditor(page, data, d);
+
+    const postBtn = document.createElement('button');
+    postBtn.className = 'btn'; postBtn.textContent = d.messageId ? '↻ Neu posten' : '📣 Posten';
+    postBtn.onclick = async () => {
+      if (!confirm(`„${d.name}" jetzt in ${chName(d.channelId)} posten?` + (d.messageId ? ' Die alte Nachricht bleibt stehen (ggf. manuell löschen).' : ''))) return;
+      postBtn.disabled = true;
+      try {
+        const res = await api('/api/roledistributors/' + encodeURIComponent(d.id) + '/post', { method: 'POST' });
+        if (res.failed?.length) toast('Gepostet, aber diese Emojis gingen nicht: ' + res.failed.join(' '), 'warn');
+        else toast('Gepostet · Reaktionen gesetzt');
+        await renderDistributors(page);
+      } catch (err) { toast(err.message, 'err'); postBtn.disabled = false; }
+    };
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn danger'; delBtn.textContent = 'Löschen';
+    delBtn.onclick = async () => {
+      if (!confirm(`Verteiler „${d.name}" löschen? Eine bereits gepostete Nachricht bleibt in Discord stehen, vergibt aber keine Rollen mehr.`)) return;
+      try {
+        await api('/api/roledistributors/' + encodeURIComponent(d.id), { method: 'DELETE' });
+        toast('Verteiler gelöscht');
+        await renderDistributors(page);
+      } catch (err) { toast(err.message, 'err'); }
+    };
+
+    card.append(editBtn, postBtn, delBtn);
+    page.append(card);
+  }
+}
+
+function showDistEditor(page, data, dist) {
+  page.replaceChildren();
+  const { channels, roles } = data;
+  // Kopie bearbeiten; model.id leer = neuer Verteiler.
+  const model = dist
+    ? JSON.parse(JSON.stringify(dist))
+    : { id: '', name: '', channelId: channels[0]?.id ?? '', messageId: '', title: '', text: '', mappings: [] };
+  if (!Array.isArray(model.mappings)) model.mappings = [];
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.style.display = 'block';
+  page.append(card);
+
+  // Name
+  const nameLabel = document.createElement('label'); nameLabel.textContent = 'Name (nur intern, für die Übersicht)';
+  const nameInp = rvInput(model.name, 'z.B. Rollen-Auswahl');
+  card.append(nameLabel, nameInp);
+
+  // Kanal
+  const chLabel = document.createElement('label'); chLabel.textContent = 'Kanal';
+  const channel = rvChannelPicker(channels, model.channelId);
+  card.append(chLabel, channel.el);
+  const chHint = document.createElement('div'); chHint.className = 'hint';
+  chHint.textContent = channels.length ? 'Hier wird die Nachricht gepostet.' : 'Keine Kanäle geladen (Bot verbunden?) — Kanal-ID von Hand eintragen.';
+  card.append(chHint);
+
+  // Titel + Zähler
+  const titleCtl = rvInput(model.title, 'Titel des Embeds (optional)');
+  card.append(counterLabel('Titel', titleCtl, 256), titleCtl);
+
+  // Nachrichtentext + Zähler
+  const textCtl = rvTextarea(model.text, 'Beschreibungstext … Markdown erlaubt');
+  card.append(counterLabel('Nachrichtentext', textCtl, 4000), textCtl);
+  const textHint = document.createElement('div'); textHint.className = 'hint';
+  textHint.textContent = 'Markdown (**fett**, *kursiv*, __unterstrichen__, `code`, [Links](https://…)). Die Emoji→Rolle-Liste hängt der Bot automatisch an.';
+  card.append(textHint);
+
+  // Zuordnungen (Emoji → Rolle)
+  const mapLabel = document.createElement('div'); mapLabel.className = 'section-label'; mapLabel.textContent = 'Emoji → Rolle';
+  card.append(mapLabel);
+  const mapWrap = document.createElement('div');
+  card.append(mapWrap);
+  const addMapBtn = document.createElement('button');
+  addMapBtn.type = 'button'; addMapBtn.className = 'btn'; addMapBtn.textContent = '+ Zuordnung';
+  card.append(addMapBtn);
+  const mapHint = document.createElement('div'); mapHint.className = 'hint';
+  mapHint.textContent = 'Emoji: Unicode (🎓) oder Server-Emoji als <:name:id>. Die Bot-Rolle muss ÜBER jeder vergebenen Rolle stehen.';
+  card.append(mapHint);
+
+  // Live-Vorschau
+  const previewLabel = document.createElement('div'); previewLabel.className = 'section-label'; previewLabel.textContent = 'Live-Vorschau';
+  const previewBox = document.createElement('div');
+  card.append(previewLabel, previewBox);
+
+  function addMapRow(emoji = '', roleId = '') {
+    const row = document.createElement('div');
+    row.className = 'map-row';
+    const eInp = rvInput(emoji, '🎓'); eInp.classList.add('map-emoji');
+    const rSel = rvRoleSelect(roles, roleId);
+    const rm = document.createElement('button');
+    rm.type = 'button'; rm.className = 'btn danger'; rm.textContent = '✕'; rm.title = 'Zuordnung entfernen';
+    rm.onclick = () => { row.remove(); updatePreview(); };
+    eInp.addEventListener('input', updatePreview);
+    rSel.addEventListener('change', updatePreview);
+    row.append(eInp, rSel, rm);
+    mapWrap.append(row);
+  }
+  addMapBtn.onclick = () => { addMapRow(); updatePreview(); };
+  for (const m of model.mappings) addMapRow(m.emoji, m.roleId);
+  if (!model.mappings.length) addMapRow();
+
+  function readMappings() {
+    return [...mapWrap.querySelectorAll('.map-row')].map((row) => ({
+      emoji: row.querySelector('.map-emoji').value.trim(),
+      roleId: row.querySelector('select').value,
+    })).filter((m) => m.emoji || m.roleId);
+  }
+  function readModel() {
+    return { name: nameInp.value.trim(), channelId: channel.get(), title: titleCtl.value, text: textCtl.value, mappings: readMappings() };
+  }
+  function updatePreview() {
+    previewBox.replaceChildren(buildPreview(readModel(), roles));
+  }
+  [nameInp, titleCtl, textCtl].forEach((el) => el.addEventListener('input', updatePreview));
+  updatePreview();
+
+  // Speichern (POST neu / PUT vorhanden); gibt den gespeicherten Verteiler zurück.
+  async function persist() {
+    const body = readModel();
+    if (!body.name) throw new Error('Name fehlt');
+    if (body.mappings.some((m) => !m.emoji || !m.roleId)) throw new Error('Jede Zuordnung braucht Emoji UND Rolle');
+    const path = model.id ? '/api/roledistributors/' + encodeURIComponent(model.id) : '/api/roledistributors';
+    const res = await api(path, { method: model.id ? 'PUT' : 'POST', body: JSON.stringify(body) });
+    model.id = res.distributor.id;
+    return res.distributor;
+  }
+
+  const actions = document.createElement('div');
+  actions.style.cssText = 'display:flex; gap:10px; margin-top:18px; flex-wrap:wrap';
+
+  const back = document.createElement('button');
+  back.className = 'btn'; back.textContent = '← Zurück';
+  back.onclick = () => renderDistributors(page);
+
+  const save = document.createElement('button');
+  save.className = 'btn primary'; save.textContent = 'Speichern';
+  save.onclick = async () => {
+    save.disabled = true;
+    try { await persist(); toast('Verteiler gespeichert'); await renderDistributors(page); }
+    catch (err) { toast(err.message, 'err'); save.disabled = false; }
+  };
+
+  const post = document.createElement('button');
+  post.className = 'btn'; post.textContent = '📣 Speichern & posten';
+  post.onclick = async () => {
+    post.disabled = true;
+    try {
+      const d = await persist();                        // erst speichern (validiert)
+      if (!confirm(`„${d.name}" jetzt in Discord posten?`)) { await renderDistributors(page); return; }
+      const res = await api('/api/roledistributors/' + encodeURIComponent(d.id) + '/post', { method: 'POST' });
+      if (res.failed?.length) toast('Gepostet, aber diese Emojis gingen nicht: ' + res.failed.join(' '), 'warn');
+      else toast('Gespeichert & gepostet');
+      await renderDistributors(page);
+    } catch (err) { toast(err.message, 'err'); post.disabled = false; }
+  };
+
+  actions.append(back, save, post);
+  card.append(actions);
+}
+
+// ============================================================
+// Modul: Status
+// ============================================================
+async function renderStatus(page) {
+  const s = await refreshStatus();
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.style.display = 'block';
+
+  const dl = document.createElement('dl');
+  const rows = [
+    ['Bot', s.bot ?? '—'],
+    ['Verbunden', s.ready ? 'ja' : 'nein'],
+    ['Laufzeit', formatUptime(s.uptimeSeconds)],
+    ['Guild konfiguriert', s.guildConfigured ? 'ja' : 'nein — keine Befehls-Registrierung'],
+    ['/live aktiv', s.liveEnabled ? 'ja' : 'nein'],
+    ['Textbefehle', String(s.counts.text)],
+    ['Code-Befehle', String(s.counts.code)],
+    ['Befehlsdatei', s.commandsFile],
+    ['Letzte Registrierung', s.lastRegistration.ok
+      ? `OK (${s.lastRegistration.at}) — ${s.lastRegistration.names.join(' ')}`
+      : `FEHLER: ${s.lastRegistration.error ?? '—'}`],
+  ];
+  for (const [k, v] of rows) {
+    const dt = document.createElement('dt');
+    dt.textContent = k;
+    const dd = document.createElement('dd');
+    dd.textContent = v;
+    dl.append(dt, dd);
+  }
+  card.append(dl);
+  page.append(card);
+
+  const retry = document.createElement('button');
+  retry.className = 'btn';
+  retry.style.marginTop = '12px';
+  retry.textContent = 'Befehle jetzt neu registrieren';
+  retry.onclick = async () => {
+    retry.disabled = true;
+    try {
+      const r = await api('/api/register', { method: 'POST' });
+      if (r.ok) toast('Registrierung erfolgreich');
+      else toast('Registrierung fehlgeschlagen: ' + (r.registration?.error ?? 'unbekannt'), 'err');
+      await route();
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      retry.disabled = false;
+    }
+  };
+  page.append(retry);
+}
+
+function formatUptime(sec) {
+  const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+  return (d ? d + 'd ' : '') + (h ? h + 'h ' : '') + m + 'min';
+}
+
+// ============================================================
+// Abmelden
+// ============================================================
+document.getElementById('logoutBtn').onclick = async () => {
+  // Rohes fetch statt api(): wir wollen danach in jedem Fall zur Login-Maske,
+  // egal ob der Server 200 oder (bei toter Session) 401 liefert.
+  try {
+    await fetch('/api/logout', { method: 'POST', headers: { 'X-Requested-With': 'fetch' } });
+  } finally {
+    location.href = '/login';
+  }
+};
+
+// ============================================================
+// Start
+// ============================================================
+applyBrand().finally(() => refreshStatus().catch(() => {}));
+route().catch((err) => toast('Laden fehlgeschlagen: ' + err.message, 'err'));
+</script>
+</body>
+</html>

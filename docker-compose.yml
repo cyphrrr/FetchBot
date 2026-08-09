@@ -1,0 +1,40 @@
+services:
+  bot:
+    build: .
+    # Über .env umbenennbar (BOT_CONTAINER_NAME), damit mehrere Instanzen mit
+    # eigenem Namen nebeneinander laufen können.
+    container_name: ${BOT_CONTAINER_NAME:-fetchbot}
+    restart: unless-stopped
+    env_file: .env
+    # Nur an das Docker-Gateway binden, nicht an 0.0.0.0: so erreichen andere
+    # Container (z.B. n8n) und der Host den Notify-Endpoint, das LAN aber nicht.
+    # Der Endpoint hat bewusst keine Auth (nur intern erreichbar).
+    ports:
+      # Notify-Endpoint (/notify, /health): nur Docker-Gateway + Host, kein LAN.
+      - "172.17.0.1:${HTTP_PORT:-3010}:${HTTP_PORT:-3010}"
+      # Admin-Panel: standardmaessig NUR localhost (der Server selbst).
+      # Von aussen erreichen: entweder SSH-Tunnel
+      #   ssh -L 7855:localhost:7855 user@server
+      # oder bewusst oeffnen, indem ADMIN_BIND in .env auf die LAN-IP
+      # (z.B. 192.168.1.x) oder 0.0.0.0 gesetzt wird. Nie ohne starkes Passwort.
+      - "${ADMIN_BIND:-127.0.0.1}:${ADMIN_PORT:-7855}:${ADMIN_PORT:-7855}"
+    environment:
+      COMMANDS_FILE: /app/data/commands.json
+    # data/ statt Einzeldatei-Mount: das Panel schreibt die Datei atomar neu,
+    # was bei einem Einzeldatei-Bind-Mount den Host-Stand nicht aktualisieren wuerde.
+    volumes:
+      - ./data:/app/data
+    # Health = "HTTP-Server antwortet", NICHT "Discord verbunden". Sonst flappt
+    # der Container bei jedem kurzen Discord-Reconnect auf unhealthy, obwohl
+    # /notify und Panel weiterlaufen. /health liefert immer HTTP 200; der
+    # Discord-Status steht als Info im Body (ok-Feld).
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://localhost:${HTTP_PORT:-3010}/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Login · Bot Admin</title>
+<style>
+  :root {
+    --bg: #1e1f22; --surface: #2b2d31; --border: #3f4147; --text: #dbdee1;
+    --muted: #949ba4; --accent: #5865f2; --accent-hover: #4752c4; --danger: #f23f43; --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text); min-height: 100vh; display: flex;
+    align-items: center; justify-content: center; padding: 20px;
+    font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  .box {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 32px; width: min(360px, 100%);
+  }
+  h1 { font-size: 19px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  p.sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input {
+    width: 100%; padding: 10px 12px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius); font: inherit;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    width: 100%; margin-top: 16px; padding: 10px; background: var(--accent); color: #fff;
+    border: 0; border-radius: var(--radius); font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button:hover { background: var(--accent-hover); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .err { color: var(--danger); font-size: 13px; margin-top: 14px; min-height: 18px; }
+</style>
+</head>
+<body>
+<form class="box" id="loginForm">
+  <h1><span id="brandEmoji">🤖</span> <span id="brandName">Bot Admin</span></h1>
+  <p class="sub">Bitte mit dem Admin-Passwort anmelden.</p>
+  <label for="pw">Passwort</label>
+  <input type="password" id="pw" autocomplete="current-password" autofocus>
+  <button type="submit" id="btn">Anmelden</button>
+  <div class="err" id="err"></div>
+</form>
+<script>
+'use strict';
+const form = document.getElementById('loginForm');
+const pw = document.getElementById('pw');
+const btn = document.getElementById('btn');
+const err = document.getElementById('err');
+
+// Branding (Name/Emoji) aus /api/brand — öffentlich, kein Login nötig. Kosmetik.
+(async () => {
+  try {
+    const b = await (await fetch('/api/brand', { headers: { 'X-Requested-With': 'fetch' } })).json();
+    if (b.emoji) document.getElementById('brandEmoji').textContent = b.emoji;
+    if (b.name) { document.getElementById('brandName').textContent = b.name; document.title = 'Login · ' + b.name; }
+  } catch { /* egal */ }
+})();
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  err.textContent = '';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
+      body: JSON.stringify({ password: pw.value }),
+    });
+    if (res.ok) { location.href = '/'; return; }
+    let body = null;
+    try { body = await res.json(); } catch { /* leere Antwort */ }
+    err.textContent = body?.error || `Fehler (HTTP ${res.status})`;
+    pw.select();
+  } catch {
+    err.textContent = 'Verbindungsfehler';
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

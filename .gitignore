@@ -1,0 +1,17 @@
+# Abhaengigkeiten
+node_modules
+npm-debug.log
+
+# Geheimnisse: echte .env niemals committen, Vorlage schon
+.env
+.env.*
+!.env.example
+
+# Enthaelt zwar nur ${ENV}-Referenzen, aber sicherheitshalber lokal halten
+.mcp.json
+
+# Laufzeitdaten (commands.json wird beim ersten Start hierhin kopiert)
+data/
+
+# Screenshots / Bilder gehoeren nicht ins Repo
+*.png

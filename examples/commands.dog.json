@@ -1,0 +1,43 @@
+{
+  "sitz": {
+    "description": "Der Hund setzt sich. Vielleicht.",
+    "replies": [
+      "*setzt sich brav hin* 🐕",
+      "*sitzt. wartet auf Leckerli* 👀",
+      "*plumpst auf den Hintern*"
+    ]
+  },
+  "platz": {
+    "description": "Der Hund macht Platz.",
+    "replies": [
+      "*legt sich hin und seufzt* 😮‍💨",
+      "*macht Platz, guckt vorwurfsvoll*",
+      "*liegt. Bewegt sich nicht mehr.*"
+    ]
+  },
+  "gassi": {
+    "description": "Sag das Wort nicht zu laut.",
+    "replies": [
+      "*dreht komplett durch* 🦮 GASSI?! GASSI!!",
+      "*rennt zur Tür und holt die Leine*",
+      "*Schwanzwedeln im Ultraschallbereich*"
+    ]
+  },
+  "leckerli": {
+    "description": "Gib dem Hund ein Leckerli.",
+    "replies": [
+      "*schnappt es aus der Luft* 🦴",
+      "*kaut zufrieden*",
+      "*guckt dich an. Will noch eins.*"
+    ]
+  },
+  "stups": {
+    "description": "Stups jemanden an.",
+    "target": true,
+    "replies": [
+      "*stupst {ziel} an*",
+      "*verlangt sofortige Streicheleinheiten von {ziel}*",
+      "*guckt {ziel} süß an*"
+    ]
+  }
+}
