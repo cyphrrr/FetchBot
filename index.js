@@ -4,10 +4,12 @@ import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { loadCommands, saveCommands, safeEqual, TARGET_TOKEN, TARGET_OPTION } from './store.js';
-import { loadSettings, saveSettings, normalizeMention, normalizeDistributor } from './settings.js';
+import { loadSettings, saveSettings, normalizeMention, normalizeDistributor, normalizeChatBridge } from './settings.js';
 import { emojiMatches } from './emoji.js';
 import { createTwitchClient, buildLiveEmbed, parseHexColor } from './twitch.js';
 import { createAdminServer } from './admin.js';
+import { createTwitchAuth } from './twitch-auth.js';
+import { createChatBridge } from './chat-bridge.js';
 
 // --- Konfiguration (alles über Env, nichts hardcodiert) ---
 const {
@@ -27,6 +29,11 @@ const {
   TWITCH_CLIENT_ID = '',
   TWITCH_CLIENT_SECRET = '',
   TWITCH_LOGIN = '',
+  // Optional: Chat-Brücke Twitch <-> Discord. Rücksprung-Adresse nach dem
+  // Twitch-Login des Bot-Accounts, exakt wie in der Twitch-Konsole eingetragen,
+  // z.B. https://bot.example.de/twitch/callback. Braucht zusätzlich die
+  // drei Twitch-Werte oben und das Admin-Panel.
+  TWITCH_REDIRECT_URI = '',
   // --- Branding (white-label): eigener Name/Emoji/Akzentfarbe pro Deployment ---
   // BRAND_NAME überschreibt den Panel-Titel (leer = der live gelesene Bot-Name).
   // BRAND_EMOJI ist das Icon im Panel-Header/Login. EMBED_COLOR färbt alle Embeds.
@@ -83,11 +90,31 @@ let settings = settingsLoad.settings;
 // /live braucht alle drei Twitch-Werte; fehlt einer, wird der Befehl weggelassen.
 const liveEnabled = Boolean(TWITCH_CLIENT_ID && TWITCH_CLIENT_SECRET && TWITCH_LOGIN);
 
+// Chat-Brücke: verfügbar, wenn alle Twitch-Werte + Redirect-URI + Panel da sind.
+// Ob sie tatsächlich läuft, entscheidet danach das Panel (an/aus + Kanal).
+const bridgeMissingEnv = Object.entries({ TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET, TWITCH_LOGIN, TWITCH_REDIRECT_URI, ADMIN_PASSWORD })
+  .filter(([, v]) => !v).map(([k]) => k);
+let bridgeCallbackPath = null;
+if (TWITCH_REDIRECT_URI) {
+  try {
+    bridgeCallbackPath = new URL(TWITCH_REDIRECT_URI).pathname;
+  } catch {
+    console.error(`[brücke] TWITCH_REDIRECT_URI ist keine gültige URL: ${TWITCH_REDIRECT_URI}`);
+    bridgeMissingEnv.push('TWITCH_REDIRECT_URI (ungültig)');
+  }
+}
+const bridgeAvailable = bridgeMissingEnv.length === 0;
+
 // Guilds:               Kanäle/Rollen im Cache (Panel-Dropdowns) + Interactions.
 // GuildMessageReactions: liefert die Reaction-Events für die Themenwoche.
 // GuildMembers:          privilegiert! Muss im Developer Portal aktiviert sein,
 //                        sonst schlägt der Login fehl. Für member.roles.add/remove.
-// Message Content brauchen wir weiterhin nicht (der Bot liest keine Nachrichten-Inhalte).
+// GuildMessages +        NUR wenn die Chat-Brücke konfiguriert ist (TWITCH_REDIRECT_URI
+// MessageContent:        & Co. gesetzt): der Bot muss Nachrichten im Brücken-Kanal lesen.
+//                        MessageContent ist privilegiert -> im Developer Portal unter
+//                        Bot -> Privileged Gateway Intents "Message Content Intent"
+//                        aktivieren, sonst startet der Container nicht ("Used disallowed
+//                        intents"). Ohne Brücken-Config wird er nicht angefordert.
 //
 // Partials: Reactions treffen auch Nachrichten, die nicht im Cache liegen (z.B. die
 // Einschreibungs-Nachricht nach einem Neustart). Ohne Partials würde Discord solche
@@ -98,6 +125,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.GuildMembers,
+    ...(bridgeAvailable ? [GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] : []),
   ],
   partials: [Partials.Message, Partials.Reaction, Partials.User],
 });
@@ -294,6 +322,67 @@ async function handleReaction(reaction, user, add) {
     // Häufigster Fall: Bot-Rolle steht nicht über der Ziel-Rolle -> Missing Permissions.
     console.error(`[rollen] Konnte Rolle nicht ${add ? 'vergeben' : 'entfernen'}: ${err.message}`);
   }
+}
+
+// --- Chat-Brücke Twitch <-> Discord ---
+
+// Token des Bot-Accounts liegt neben settings.json im data/-Mount (nicht im Repo!).
+const TWITCH_TOKEN_FILE = join(dirname(COMMANDS_FILE), 'twitch-bridge-token.json');
+
+const twitchAuth = bridgeAvailable
+  ? createTwitchAuth({
+    clientId: TWITCH_CLIENT_ID,
+    clientSecret: TWITCH_CLIENT_SECRET,
+    redirectUri: TWITCH_REDIRECT_URI,
+    tokenFile: TWITCH_TOKEN_FILE,
+  })
+  : null;
+
+const bridge = twitchAuth
+  ? createChatBridge({
+    client,
+    auth: twitchAuth,
+    broadcasterLogin: TWITCH_LOGIN.toLowerCase(),
+    getSettings: () => settings.chatBridge,
+    webhookName: `${BRAND_NAME || 'FetchBot'} Chat-Brücke`,
+  })
+  : null;
+
+/**
+ * Brücken-Einstellung aus dem Panel ({enabled, channelId}) speichern und die
+ * Brücke passend starten/stoppen. Wirft 400 bei Unfug.
+ */
+function setBridgeSettings(data) {
+  const next = normalizeChatBridge({ ...settings.chatBridge, ...(data && typeof data === 'object' ? data : {}) });
+  if (data?.channelId && !next.channelId) throw httpError(400, 'Ungültige Kanal-ID');
+  if (next.enabled && !next.channelId) throw httpError(400, 'Erst einen Kanal wählen, dann aktivieren');
+  const channels = getTextChannels();
+  if (next.channelId && channels.length && !channels.some((c) => c.id === next.channelId)) {
+    throw httpError(400, 'Kanal gehört nicht zum Server oder ist kein Textkanal');
+  }
+  settings = saveSettings(SETTINGS_FILE, { ...settings, chatBridge: next });
+  bridge?.reconcile();
+  return settings.chatBridge;
+}
+
+/** Alles, was das Panel-Modul "Chat-Brücke" anzeigt. */
+function getBridgeState() {
+  const cfg = settings.chatBridge;
+  return {
+    available: bridgeAvailable,
+    missingEnv: bridgeMissingEnv,
+    settings: cfg,
+    channels: getTextChannels(),
+    missingPermissions: bridge ? bridge.missingPermissions(cfg.channelId) : null,
+    account: twitchAuth ? twitchAuth.info() : null,
+    broadcasterLogin: TWITCH_LOGIN.toLowerCase() || null,
+    runtime: bridge ? bridge.status() : null,
+  };
+}
+
+if (bridge) {
+  client.on('messageCreate', (message) => bridge.handleDiscordMessage(message));
+  client.on('messageDelete', (message) => bridge.handleDiscordDelete(message));
 }
 
 // --- Slash-Befehle ---
@@ -543,6 +632,9 @@ if (ADMIN_PASSWORD) {
       counts: { text: Object.keys(textCommands).length, code: CODE_COMMANDS.length },
       lastRegistration,
       commandsFile: String(COMMANDS_FILE),
+      bridge: bridge
+        ? { available: true, enabled: settings.chatBridge.enabled, connection: bridge.status().connection, account: twitchAuth.info().login }
+        : { available: false, missingEnv: bridgeMissingEnv },
     }),
     getCommands: () => textCommands,
     codeCommands: CODE_COMMANDS,
@@ -559,6 +651,16 @@ if (ADMIN_PASSWORD) {
     updateDistributor,
     deleteDistributor,
     postDistributor,
+    bridge: bridge && {
+      callbackPath: bridgeCallbackPath,
+      getState: getBridgeState,
+      setSettings: setBridgeSettings,
+      connectUrl: () => twitchAuth.authorizeUrl(),
+      handleCallback: (query) => twitchAuth.handleCallback(query),
+      disconnect: () => twitchAuth.disconnect(),
+      refreshMod: () => bridge.refreshModStatus(),
+    },
+    bridgeUnavailable: bridge ? null : { missingEnv: bridgeMissingEnv },
   });
   adminApp.listen(Number(ADMIN_PORT), () => {
     console.log(`[admin] Panel lauscht auf Port ${ADMIN_PORT}`);
@@ -571,7 +673,12 @@ client.once('clientReady', async () => {
   console.log(`[discord] Online als ${client.user.tag}`);
   await registerCommands();
   if (!liveEnabled) console.log('[discord] /live ausgelassen — TWITCH_CLIENT_ID/SECRET/LOGIN unvollständig');
+  if (bridge) bridge.reconcile();
+  else console.log(`[brücke] nicht verfügbar — fehlt: ${bridgeMissingEnv.join(', ')}`);
 });
+
+// Nach einem Discord-Reconnect die Brücke ggf. wieder anwerfen.
+client.on('shardResume', () => bridge?.reconcile());
 
 client.on('error', (err) => console.error('[discord] Fehler:', err.message));
 
@@ -583,6 +690,11 @@ const server = app.listen(Number(HTTP_PORT), () => {
 
 client.login(DISCORD_BOT_TOKEN).catch((err) => {
   console.error('[fatal] Discord-Login fehlgeschlagen:', err.message);
+  if (bridgeAvailable && /disallowed intents/i.test(err.message)) {
+    console.error('[fatal] Die Chat-Brücke ist konfiguriert (TWITCH_REDIRECT_URI) und braucht den "Message Content Intent".');
+    console.error('[fatal] Discord Developer Portal -> Bot -> Privileged Gateway Intents -> Message Content Intent einschalten,');
+    console.error('[fatal] oder TWITCH_REDIRECT_URI in der .env leeren, dann startet der Bot ohne Brücke.');
+  }
   process.exit(1);
 });
 
@@ -591,6 +703,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     console.log(`[exit] ${signal} empfangen, fahre herunter`);
     server.close();
+    bridge?.stop();
     client.destroy();
     process.exit(0);
   });

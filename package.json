@@ -1,11 +1,12 @@
 {
   "name": "fetchbot",
   "version": "1.0.0",
-  "description": "Self-hostable Discord bot: panel-managed slash commands, reaction roles, and optional Twitch go-live notifications.",
+  "description": "Self-hostable Discord bot: panel-managed slash commands, reaction roles, optional Twitch go-live notifications and a Twitch <-> Discord chat bridge.",
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test 'test/*.test.js'"
   },
   "dependencies": {
     "discord.js": "^14.16.3",

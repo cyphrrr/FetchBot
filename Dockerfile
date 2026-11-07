@@ -11,7 +11,7 @@ RUN npm ci --omit=dev || npm install --omit=dev
 
 # commands.json kommt als Fallback mit ins Image: beim ersten Start wird sie
 # nach data/ (Volume) kopiert, danach ist nur noch die Kopie relevant.
-COPY index.js admin.js store.js settings.js emoji.js twitch.js commands.json ./
+COPY index.js admin.js store.js settings.js emoji.js twitch.js twitch-auth.js chat-bridge.js bridge-format.js commands.json ./
 COPY public ./public
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
