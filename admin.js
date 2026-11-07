@@ -117,6 +117,30 @@ function clearSessionCookie(res) {
   res.set('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/**
+ * Kleine Ergebnisseite nach dem Twitch-Login. Bewusst eine eigene Seite statt
+ * Redirect: Twitch ruft uns seitenübergreifend auf, dabei schickt der Browser das
+ * SameSite=Strict-Session-Cookie nicht mit — ein direkter Redirect ins Panel
+ * würde auf der Login-Maske landen. Der Klick/JS-Sprung von HIER ist same-site,
+ * dann ist das Cookie wieder dabei.
+ */
+function callbackPage(ok, text) {
+  const target = '/#/bruecke';
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Twitch-Verbindung</title>
+<style>body{background:#1e1f22;color:#dbdee1;font:15px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0}
+.box{background:#2b2d31;border:1px solid #3f4147;border-left:4px solid ${ok ? '#23a55a' : '#f23f43'};border-radius:8px;padding:24px 28px;max-width:460px}
+h1{font-size:18px;margin:0 0 8px}a{color:#a5b0ff}</style></head><body><div class="box">
+<h1>${ok ? '✅ Twitch verbunden' : '❌ Verbindung fehlgeschlagen'}</h1><p>${escapeHtml(text)}</p>
+<p><a href="${target}" id="back">Zurück zum Panel</a></p></div>
+${ok ? `<script>setTimeout(function(){location.href=${JSON.stringify(target)}},1500)</script>` : ''}
+</body></html>`;
+}
+
 /**
  * ctx:
  *   password        — Admin-Passwort (Pflicht)
@@ -141,6 +165,15 @@ function clearSessionCookie(res) {
  *                     Datei, lädt neu, registriert bei Discord); der Mutator darf
  *                     httpError(...) werfen. Gibt {registration} zurück.
  *   registerNow()   — Registrierung erneut anstoßen (Retry-Knopf)
+ *   bridge          — optional (null = Chat-Brücke nicht konfiguriert):
+ *     callbackPath  — Pfad aus TWITCH_REDIRECT_URI, z.B. /twitch/callback (öffentlich!)
+ *     getState()    — alles fürs Panel-Modul (Einstellung, Konto, Laufzeit, Kanäle)
+ *     setSettings({enabled, channelId}) — speichern + starten/stoppen; wirft 400
+ *     connectUrl()  — Twitch-Login-URL mit Einmal-state
+ *     handleCallback(query) — Code gegen Token tauschen; gibt {login}; wirft
+ *     disconnect()  — Token widerrufen + löschen (async)
+ *     refreshMod()  — Mod-Status neu abfragen (async, gibt true/false/null)
+ *   bridgeUnavailable — { missingEnv: [...] }, wenn bridge null ist
  */
 export function createAdminServer(ctx) {
   const app = express();
@@ -210,6 +243,24 @@ export function createAdminServer(ctx) {
     clearSessionCookie(res);
     res.json({ ok: true });
   });
+
+  // --- Öffentlich: Rücksprung vom Twitch-Login (Chat-Brücke) ---
+  // Kein Session-Check möglich (siehe callbackPage). Geschützt ist er über den
+  // Einmal-"state", den nur ein eingeloggter Admin per "Verbinden" bekommt.
+  // Pfad darf keine Panel-Route verdecken (/, /login, /api/…).
+  const cbPath = ctx.bridge?.callbackPath;
+  const cbPathOk = cbPath && cbPath !== '/' && !/^\/(api|login)(\/|$)/.test(cbPath) && !/\.html$/.test(cbPath);
+  if (cbPath && !cbPathOk) console.error(`[admin] TWITCH_REDIRECT_URI-Pfad "${cbPath}" kollidiert mit dem Panel — z.B. /twitch/callback nehmen`);
+  if (cbPathOk) {
+    app.get(ctx.bridge.callbackPath, async (req, res) => {
+      try {
+        const { login } = await ctx.bridge.handleCallback(req.query ?? {});
+        res.send(callbackPage(true, `Angemeldet als ${login}. Die Chat-Brücke nutzt jetzt diesen Account.`));
+      } catch (err) {
+        res.status(err.httpStatus || 500).send(callbackPage(false, err.message));
+      }
+    });
+  }
 
   // --- Ab hier ist alles geschützt: gültige Session Pflicht. ---
   app.use((req, res, next) => {
@@ -353,6 +404,51 @@ export function createAdminServer(ctx) {
       res.json({ ok: true, ...result });
     } catch (err) {
       res.status(err.httpStatus || 500).json({ error: err.message });
+    }
+  });
+
+  // --- API: Chat-Brücke Twitch <-> Discord ---
+  app.get('/api/bridge', (_req, res) => {
+    if (!ctx.bridge) return res.json({ available: false, missingEnv: ctx.bridgeUnavailable?.missingEnv ?? [] });
+    res.json(ctx.bridge.getState());
+  });
+
+  app.put('/api/bridge', (req, res) => {
+    if (!ctx.bridge) return res.status(503).json({ error: 'Chat-Brücke ist nicht konfiguriert (siehe README)' });
+    try {
+      const body = req.body ?? {};
+      const settings = ctx.bridge.setSettings({
+        ...(typeof body.enabled === 'boolean' && { enabled: body.enabled }),
+        ...(typeof body.channelId === 'string' && { channelId: body.channelId }),
+      });
+      res.json({ ok: true, settings });
+    } catch (err) {
+      res.status(err.httpStatus || 400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/bridge/connect', (_req, res) => {
+    if (!ctx.bridge) return res.status(503).json({ error: 'Chat-Brücke ist nicht konfiguriert' });
+    res.json({ url: ctx.bridge.connectUrl() });
+  });
+
+  app.post('/api/bridge/disconnect', async (_req, res) => {
+    if (!ctx.bridge) return res.status(503).json({ error: 'Chat-Brücke ist nicht konfiguriert' });
+    try {
+      await ctx.bridge.disconnect();
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/bridge/modcheck', async (_req, res) => {
+    if (!ctx.bridge) return res.status(503).json({ error: 'Chat-Brücke ist nicht konfiguriert' });
+    try {
+      const isMod = await ctx.bridge.refreshMod();
+      res.json({ ok: true, isMod });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 

@@ -33,6 +33,7 @@ A small Discord bot with a browser admin panel:
 | Reaction roles | above + **Server Members Intent** + `Manage Roles` |
 | Twitch `/live` command | above + `TWITCH_CLIENT_ID/SECRET/LOGIN` |
 | Twitch go-live post (`/notify`) | above + `DISCORD_CHANNEL_ID` + an external poller (e.g. n8n) |
+| Twitch ↔ Discord chat bridge | `/live` values + `TWITCH_REDIRECT_URI` + panel + **Message Content Intent** + a Twitch bot account |
 
 ## Quick start
 
@@ -58,7 +59,8 @@ chowned by the container on first start — you don't need to create it by hand.
    its token into `DISCORD_BOT_TOKEN`.
 2. Set the bot's **name and avatar in the Portal** — they are not in code.
 3. Under **Bot → Privileged Gateway Intents**, enable the **Server Members Intent**
-   (required for reaction roles). *Message Content Intent is not needed.*
+   (required for reaction roles). The **Message Content Intent** is only needed for the
+   [chat bridge](#optional-twitch--discord-chat-bridge).
 4. Under **OAuth2 → URL Generator**, pick scopes `bot` **and** `applications.commands`,
    and permissions `Send Messages`, `Embed Links`, `Add Reactions`, `Manage Roles`.
    Invite the bot with the generated URL.
@@ -86,7 +88,8 @@ the annotated list. The essentials:
 | `ADMIN_TRUST_PROXY` | Set to `1` only when behind a reverse proxy. |
 | `DISCORD_CHANNEL_ID` | Target channel for the go-live post (only for `/notify`). |
 | `MENTION_ROLE_ID` | Start default for the go-live mention (empty / `everyone` / role ID). |
-| `TWITCH_CLIENT_ID/SECRET/LOGIN` | Only for `/live`; all three or none. |
+| `TWITCH_CLIENT_ID/SECRET/LOGIN` | For `/live` and the chat bridge; all three or none. |
+| `TWITCH_REDIRECT_URI` | Enables the chat bridge (OAuth callback of the panel, e.g. `https://bot.example.com/twitch/callback`). |
 | `NOTIFY_TOKEN` | If set, `/notify` requires header `X-Notify-Token`. |
 | `HTTP_PORT` | Internal notify/health port (also drives the compose port mapping). |
 | `BOT_CONTAINER_NAME` | Container name (compose); rename to run several instances. |
@@ -173,6 +176,85 @@ endpoint binds there and not to `0.0.0.0`.
 
 Responses: `200` sent · `400` missing field · `503` bot not ready / no channel
 configured · `500` Discord error.
+
+## Optional: Twitch ↔ Discord chat bridge
+
+Connects the Twitch chat of `TWITCH_LOGIN` with **one** Discord channel, both ways. Which
+channel, and whether the bridge runs at all, is set in the panel under **Chat-Brücke**.
+
+| Where | How a message shows up |
+| --- | --- |
+| Discord | webhook message with the Twitch name and avatar: **viewer123 (Twitch)** `APP` |
+| Twitch | sent by the bot account: `mybot: Lena (Discord): anyone around?` |
+
+Nobody can post under someone else's name on Twitch, so everything there comes from a
+dedicated bot account with the Discord name in front.
+
+### Setup
+
+1. **A Twitch bot account** (separate from the streamer), email verified. Ideally make it a
+   **moderator** of the channel (`/mod mybot`, by the streamer or a Lead Moderator): higher
+   send limit, not slowed by slow/follower mode, and deleted Discord messages also vanish on
+   Twitch.
+2. **Twitch app** (the same one as for `/live`, [Developer Console](https://dev.twitch.tv/console/apps)):
+   add your callback under *OAuth Redirect URLs*, e.g. `https://bot.example.com/twitch/callback`.
+3. **`.env`**: `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_LOGIN`, `ADMIN_PASSWORD` and
+   `TWITCH_REDIRECT_URI` (exactly as in step 2). The URL must point at the **panel** (same
+   host); the path is up to you but must not be `/`, `/login` or `/api/...`.
+4. **Discord Developer Portal → Bot → Privileged Gateway Intents**: enable the
+   **Message Content Intent**. *Once `TWITCH_REDIRECT_URI` is set, the bot requests it — if
+   it's off, the login fails (`Used disallowed intents`) and the container won't start.*
+5. **Channel permissions** for the bot role: View Channel, Send Messages, Manage Webhooks,
+   Add Reactions, Read Message History. The panel shows what's missing.
+6. Rebuild: `docker compose up -d --build`.
+7. Panel → **Chat-Brücke** → **Mit Twitch verbinden**. Twitch shows which account you're
+   signed in with — it must be the **bot account** (otherwise click "Not you?").
+8. Pick the channel, tick **Brücke aktiv**, save. Try a test channel first; switching
+   channels needs no restart.
+
+The bot creates a webhook named "`BRAND_NAME` Chat-Brücke" in the channel. The bot
+account's token is stored in `data/twitch-bridge-token.json` (mode 600), refreshes itself
+and is revoked when you click **Trennen**. Scopes: `user:read:chat`, `user:write:chat`,
+`user:read:moderated_channels`, `moderator:manage:chat_messages`.
+
+### Behaviour
+
+- **Text only.** Images, GIFs, stickers and attachments are not bridged.
+- Long Discord messages are split into 500-character Twitch messages (max. 5 parts, each
+  with the name prefix). Line breaks → spaces, server emojis → `:name:`, spoilers → `[Spoiler]`.
+- Twitch markdown is escaped in Discord (no masked links), link previews are off.
+  `@everyone`, `@here` and roles never ping.
+- `@Name` on Twitch pings a Discord user only if they wrote in the bridge channel during the
+  last 2 hours. Real Twitch mentions (`@twitchuser`) never ping in Discord.
+- Replies are kept: a Discord reply to a mirrored message becomes a real Twitch reply, and
+  a Twitch reply to a bridged message mentions the Discord author.
+- No echo: the bot account's messages on Twitch and webhook/bot messages in Discord are
+  never mirrored back. In a Shared Chat only the own channel is mirrored.
+
+### Moderation
+
+| Event | Result |
+| --- | --- |
+| Twitch mod deletes a message | the Discord copy is deleted |
+| Ban / timeout on Twitch | that user's Discord copies (since start) are deleted |
+| Discord message deleted | the Twitch copy is deleted — only if the bot is a mod |
+| Discord mod deletes a mirrored Twitch message | gone in Discord only |
+| Twitch drops the message (AutoMod, blocked terms, slow mode …) | 🚫 reaction in Discord |
+| Bridge couldn't send (queue full, error) | ⚠️ reaction in Discord |
+
+Twitch bans do not apply in Discord — Discord is moderated by the Discord mods. Edits and a
+full `/clear` are not mirrored. The message mapping lives in memory only, so after a restart
+older messages can no longer be deleted in sync. Logs use the prefixes `[brücke]` and
+`[twitch-auth]`; the panel shows connection state, counters and the last error.
+
+## Tests
+
+```bash
+npm install && npm test
+```
+
+Runs the bridge's text conversion, the Twitch login and the full bridge flow against a
+simulated Twitch and Discord (no network), plus the panel's bridge API.
 
 ## White-label / branding
 

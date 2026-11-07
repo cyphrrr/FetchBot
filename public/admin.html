@@ -212,6 +212,7 @@ const MODULES = [
   { id: 'commands', title: 'Befehle', icon: '💬', render: renderCommands },
   { id: 'ansage', title: 'Live-Ansage', icon: '📣', render: renderAnnounce },
   { id: 'rollen', title: 'Rollenverteilung', icon: '🎭', render: renderDistributors },
+  { id: 'bruecke', title: 'Chat-Brücke', icon: '🌉', render: renderBridge },
   { id: 'status', title: 'Status', icon: '📡', render: renderStatus },
 ];
 
@@ -885,6 +886,148 @@ function showDistEditor(page, data, dist) {
 }
 
 // ============================================================
+// Modul: Chat-Brücke (Twitch-Chat <-> Discord-Kanal)
+// ============================================================
+
+// Kleiner DOM-Helfer: el('div', {className:'x'}, 'Text', kindElement, …)
+function el(tag, props = {}, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'style') n.style.cssText = v; else n[k] = v;
+  }
+  for (const c of children) if (c != null && c !== false) n.append(c);
+  return n;
+}
+const blockCard = (...children) => { const c = el('div', { className: 'card' }, ...children); c.style.display = 'block'; return c; };
+const cardTitle = (t) => el('div', { style: 'font-weight:600; margin-bottom:10px' }, t);
+const note = (t, color) => el('div', { className: 'hint', style: `font-size:13px; margin-top:8px; white-space:normal${color ? '; color:' + color : ''}` }, t);
+
+const CONNECTION_TEXT = {
+  aus: 'aus', verbinde: 'verbindet …', verbunden: 'verbunden', getrennt: 'getrennt — verbindet neu …', fehler: 'Fehler',
+};
+
+async function renderBridge(page) {
+  const data = await api('/api/bridge');
+
+  if (!data.available) {
+    page.append(blockCard(
+      cardTitle('Chat-Brücke ist noch nicht eingerichtet'),
+      note('Es fehlen Werte in der .env: ' + (data.missingEnv?.join(', ') || '—') + '. Danach den Container neu starten.'),
+      note('Wichtig: Mit der Brücke liest der Bot Nachrichten. Dafür im Discord Developer Portal unter Bot → Privileged Gateway Intents den „Message Content Intent" einschalten — sonst startet der Bot nicht. Details in der README, Abschnitt „Chat-Brücke".', 'var(--warn)'),
+    ));
+    return;
+  }
+
+  const { account, runtime, settings, channels, missingPermissions, broadcasterLogin } = data;
+
+  // --- Karte 1: Twitch-Konto des Bots ---
+  const acc = blockCard(cardTitle('Twitch-Konto für die Brücke'));
+  if (account.connected) {
+    acc.append(el('div', {}, 'Verbunden als ', el('b', {}, account.login)));
+    const mod = runtime?.isMod;
+    acc.append(note(
+      mod === true ? `✅ Mod im Kanal ${broadcasterLogin}`
+        : mod === false ? `⚠️ Kein Mod in ${broadcasterLogin} — die Brücke läuft, aber mit engerem Sendelimit, und gelöschte Discord-Nachrichten bleiben auf Twitch stehen.`
+          : '❔ Mod-Status unbekannt',
+      mod === true ? 'var(--success)' : mod === false ? 'var(--warn)' : null,
+    ));
+    if (account.login === broadcasterLogin) {
+      acc.append(note('⚠️ Das ist der Streamer-Account selbst. Nachrichten aus Discord erscheinen dann unter dem Namen des Streamers. Besser „Neu verbinden" und mit dem Bot-Account anmelden.', 'var(--warn)'));
+    }
+    if (account.missingScopes?.length) {
+      acc.append(note('⚠️ Dem Token fehlen Rechte: ' + account.missingScopes.join(', ') + ' — bitte „Neu verbinden".', 'var(--warn)'));
+    }
+  } else {
+    acc.append(el('div', { className: 'desc', style: 'white-space:normal' }, 'Noch kein Twitch-Konto verbunden. Die Brücke schreibt im Twitch-Chat unter diesem Konto.'));
+    if (account.error) acc.append(note('Letzter Fehler: ' + account.error, 'var(--danger)'));
+  }
+  acc.append(note('Beim Verbinden zeigt Twitch an, als wer du gerade angemeldet bist. Ist das nicht der Bot-Account, dort auf „Nicht du?" klicken und mit dem Bot-Account anmelden.'));
+
+  const accActions = el('div', { style: 'display:flex; gap:10px; margin-top:14px; flex-wrap:wrap' });
+  const connectBtn = el('button', { className: account.connected ? 'btn' : 'btn primary', textContent: account.connected ? 'Neu verbinden' : 'Mit Twitch verbinden' });
+  connectBtn.onclick = async () => {
+    connectBtn.disabled = true;
+    try { const { url } = await api('/api/bridge/connect', { method: 'POST' }); location.href = url; }
+    catch (err) { toast(err.message, 'err'); connectBtn.disabled = false; }
+  };
+  accActions.append(connectBtn);
+  if (account.connected) {
+    const modBtn = el('button', { className: 'btn', textContent: 'Mod-Status prüfen' });
+    modBtn.onclick = async () => {
+      modBtn.disabled = true;
+      try {
+        const r = await api('/api/bridge/modcheck', { method: 'POST' });
+        toast(r.isMod === true ? 'Bot ist Mod' : r.isMod === false ? 'Bot ist KEIN Mod' : 'Mod-Status nicht abfragbar', r.isMod === true ? 'ok' : 'warn');
+        await route();
+      } catch (err) { toast(err.message, 'err'); modBtn.disabled = false; }
+    };
+    const discBtn = el('button', { className: 'btn danger', textContent: 'Trennen' });
+    discBtn.onclick = async () => {
+      if (!confirm(`Twitch-Konto ${account.login} trennen? Die Brücke stoppt sofort.`)) return;
+      try { await api('/api/bridge/disconnect', { method: 'POST' }); toast('Getrennt'); await route(); }
+      catch (err) { toast(err.message, 'err'); }
+    };
+    accActions.append(modBtn, discBtn);
+  }
+  acc.append(accActions);
+  page.append(acc);
+
+  // --- Karte 2: Einstellungen ---
+  const cfg = blockCard(cardTitle('Einstellungen'));
+  const enabled = el('input', { type: 'checkbox', id: 'brEnabled', checked: settings.enabled });
+  cfg.append(el('div', { className: 'check', style: 'margin-top:0' }, enabled,
+    el('label', { htmlFor: 'brEnabled', style: 'margin:0; color:var(--text)' }, 'Brücke aktiv')));
+  const chPicker = rvChannelPicker(channels, settings.channelId);
+  cfg.append(el('label', {}, 'Discord-Kanal'), chPicker.el);
+  cfg.append(note('Alles, was hier geschrieben wird, landet im Twitch-Chat von ' + broadcasterLogin + ' — und umgekehrt. Nur Text: Bilder, GIFs und Sticker werden nicht übertragen.'));
+  if (settings.channelId && missingPermissions?.length) {
+    cfg.append(note('⚠️ Dem Bot fehlen in diesem Kanal Rechte: ' + missingPermissions.join(', '), 'var(--warn)'));
+  }
+  if (!account.connected) cfg.append(note('Hinweis: Ohne verbundenes Twitch-Konto bleibt die Brücke aus, auch wenn sie hier aktiv ist.', 'var(--warn)'));
+  const save = el('button', { className: 'btn primary', textContent: 'Speichern', style: 'margin-top:14px' });
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      await api('/api/bridge', { method: 'PUT', body: JSON.stringify({ enabled: enabled.checked, channelId: chPicker.get() }) });
+      toast('Chat-Brücke gespeichert');
+      await route();
+    } catch (err) { toast(err.message, 'err'); save.disabled = false; }
+  };
+  cfg.append(save);
+  page.append(cfg);
+
+  // --- Karte 3: Laufzeit ---
+  const run = blockCard(cardTitle('Laufzeit'));
+  const runBody = el('div');
+  run.append(runBody);
+  const fillRuntime = (rt) => {
+    const dot = el('span', { className: 'dot' + (rt?.connection === 'verbunden' ? ' on' : '') });
+    dot.style.display = 'inline-block';
+    dot.style.marginRight = '8px';
+    const dl = el('dl');
+    const rows = [
+      ['Verbindung zu Twitch', CONNECTION_TEXT[rt?.connection] ?? rt?.connection ?? '—'],
+      ['Twitch → Discord', String(rt?.stats?.toDiscord ?? 0)],
+      ['Discord → Twitch', String(rt?.stats?.toTwitch ?? 0)],
+      ['Verworfen', String(rt?.stats?.dropped ?? 0)],
+      ['Warteschlange', `${rt?.queued?.toTwitch ?? 0} → Twitch · ${rt?.queued?.toDiscord ?? 0} → Discord`],
+      ['Zähler seit', rt?.stats?.since ? new Date(rt.stats.since).toLocaleString('de-DE') : '—'],
+    ];
+    for (const [k, v] of rows) dl.append(el('dt', {}, k), el('dd', {}, v));
+    runBody.replaceChildren(el('div', { style: 'margin-bottom:10px' }, dot, rt?.running ? 'läuft' : 'gestoppt'), dl);
+    if (rt?.error) runBody.append(note('Letzter Fehler: ' + rt.error, 'var(--danger)'));
+  };
+  fillRuntime(runtime);
+  page.append(run);
+
+  // Laufzeit-Karte alle 5s auffrischen, solange die Seite offen ist.
+  const timer = setInterval(async () => {
+    if (!document.body.contains(run)) { clearInterval(timer); return; }
+    try { fillRuntime((await api('/api/bridge')).runtime); } catch { /* nächster Versuch */ }
+  }, 5000);
+}
+
+// ============================================================
 // Modul: Status
 // ============================================================
 async function renderStatus(page) {
@@ -904,6 +1047,9 @@ async function renderStatus(page) {
     ['Textbefehle', String(s.counts.text)],
     ['Code-Befehle', String(s.counts.code)],
     ['Befehlsdatei', s.commandsFile],
+    ['Chat-Brücke', !s.bridge?.available
+      ? 'nicht konfiguriert'
+      : `${s.bridge.enabled ? 'an' : 'aus'} · ${s.bridge.connection} · Twitch-Konto: ${s.bridge.account ?? '—'}`],
     ['Letzte Registrierung', s.lastRegistration.ok
       ? `OK (${s.lastRegistration.at}) — ${s.lastRegistration.names.join(' ')}`
       : `FEHLER: ${s.lastRegistration.error ?? '—'}`],

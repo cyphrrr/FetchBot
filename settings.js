@@ -1,4 +1,4 @@
-// Laufzeit-Einstellungen (Live-Ansage-Mention + Rollenverteiler). Liegt als
+// Laufzeit-Einstellungen (Live-Ansage-Mention + Rollenverteiler + Chat-Brücke). Liegt als
 // settings.json im data/-Mount neben commands.json und überlebt damit Rebuilds.
 // Erweiterbar: weitere Felder einfach in normalizeSettings ergänzen.
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
@@ -104,12 +104,27 @@ export function normalizeDistributors(rawSettings) {
   return [];
 }
 
+// --- Chat-Brücke Twitch <-> Discord ---
+// { enabled, channelId } — welcher Discord-Kanal mit dem Twitch-Chat verbunden ist.
+// Standard: aus. Das Twitch-Token liegt NICHT hier, sondern in twitch-bridge-token.json.
+
+/** Prüft/normalisiert die Brücken-Einstellung. Tolerant, wirft nicht. */
+export function normalizeChatBridge(raw) {
+  const b = raw && typeof raw === 'object' ? raw : {};
+  const channelId = str(b.channelId, 30);
+  return {
+    enabled: b.enabled === true,
+    channelId: /^\d{5,25}$/.test(channelId) ? channelId : '',
+  };
+}
+
 /** Rohobjekt -> geprüftes Settings-Objekt. */
 export function normalizeSettings(raw) {
   const s = raw && typeof raw === 'object' ? raw : {};
   return {
     mention: normalizeMention(s.mention),
     roleDistributors: normalizeDistributors(s),
+    chatBridge: normalizeChatBridge(s.chatBridge),
   };
 }
 

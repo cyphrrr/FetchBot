@@ -32,6 +32,7 @@ Ein kleiner Discord-Bot mit Browser-Admin-Panel:
 | Reaction-Roles | dazu **Server Members Intent** + `Manage Roles` |
 | Twitch-`/live`-Befehl | dazu `TWITCH_CLIENT_ID/SECRET/LOGIN` |
 | Twitch-Live-Post (`/notify`) | dazu `DISCORD_CHANNEL_ID` + externer Poller (z.B. n8n) |
+| Chat-Brücke Twitch ↔ Discord | `/live`-Werte + `TWITCH_REDIRECT_URI` + Panel + **Message Content Intent** + Twitch-Bot-Account |
 
 ## Schnellstart
 
@@ -57,7 +58,8 @@ ersten Start selbst an und setzt die Rechte — du musst es **nicht** von Hand e
    den Token in `DISCORD_BOT_TOKEN` kopieren.
 2. **Name und Avatar des Bots im Portal** setzen — nicht im Code.
 3. Unter **Bot → Privileged Gateway Intents** den **Server Members Intent** aktivieren
-   (Pflicht für Reaction-Roles). *Message Content Intent wird nicht gebraucht.*
+   (Pflicht für Reaction-Roles). Den **Message Content Intent** braucht nur die
+   [Chat-Brücke](#optional-chat-brücke-twitch--discord).
 4. Unter **OAuth2 → URL Generator** Scopes `bot` **und** `applications.commands` wählen,
    Permissions `Send Messages`, `Embed Links`, `Add Reactions`, `Manage Roles`. Mit der
    erzeugten URL den Bot einladen.
@@ -85,7 +87,8 @@ Alles über Umgebungsvariablen — die kommentierte Liste steht in
 | `ADMIN_TRUST_PROXY` | Nur hinter Reverse Proxy auf `1` setzen. |
 | `DISCORD_CHANNEL_ID` | Ziel-Channel des Live-Posts (nur für `/notify`). |
 | `MENTION_ROLE_ID` | Start-Default der Live-Mention (leer / `everyone` / Rollen-ID). |
-| `TWITCH_CLIENT_ID/SECRET/LOGIN` | Nur für `/live`; alle drei oder keiner. |
+| `TWITCH_CLIENT_ID/SECRET/LOGIN` | Für `/live` und die Chat-Brücke; alle drei oder keiner. |
+| `TWITCH_REDIRECT_URI` | Schaltet die Chat-Brücke frei (OAuth-Rücksprung des Panels, z.B. `https://bot.example.de/twitch/callback`). |
 | `NOTIFY_TOKEN` | Gesetzt = `/notify` verlangt Header `X-Notify-Token`. |
 | `HTTP_PORT` | Interner Notify-/Health-Port (steuert auch das Port-Mapping). |
 | `BOT_CONTAINER_NAME` | Container-Name (compose); umbenennen für mehrere Instanzen. |
@@ -173,6 +176,87 @@ an `0.0.0.0`, steht in den compose-Kommentaren.
 
 Antworten: `200` gesendet · `400` Pflichtfeld fehlt · `503` Bot nicht bereit / kein Kanal
 konfiguriert · `500` Discord-Fehler.
+
+## Optional: Chat-Brücke Twitch ↔ Discord
+
+Verbindet den Twitch-Chat von `TWITCH_LOGIN` mit **einem** Discord-Kanal, in beide
+Richtungen. Welcher Kanal, und ob die Brücke läuft, stellst du im Panel unter
+**Chat-Brücke** ein.
+
+| Wo | Wie die Nachricht erscheint |
+| --- | --- |
+| Discord | Webhook-Nachricht mit Twitch-Name und -Avatar: **viewer123 (Twitch)** `APP` |
+| Twitch | vom Bot-Account: `meinbot: Lena (Discord): ist wer da?` |
+
+Auf Twitch kann niemand unter fremdem Namen schreiben, deshalb kommt dort alles von einem
+eigenen Bot-Account mit dem Discord-Namen vorneweg.
+
+### Einrichtung
+
+1. **Twitch-Bot-Account** (nicht der Streamer), Mail bestätigt. Am besten **Mod** im Kanal
+   (`/mod meinbot`, durch Streamer oder Lead-Mod): höheres Sendelimit, Slow-/Follower-Mode
+   bremsen nicht, gelöschte Discord-Nachrichten verschwinden auch auf Twitch.
+2. **Twitch-App** (dieselbe wie für `/live`, [Developer Console](https://dev.twitch.tv/console/apps)):
+   unter *OAuth Redirect URLs* die Rücksprung-Adresse eintragen, z.B.
+   `https://bot.example.de/twitch/callback`.
+3. **`.env`**: `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`, `TWITCH_LOGIN`, `ADMIN_PASSWORD` und
+   `TWITCH_REDIRECT_URI` (exakt wie in Schritt 2). Die URL muss aufs **Panel** zeigen (gleiche
+   Domain); der Pfad ist frei, aber nicht `/`, `/login` oder `/api/...`.
+4. **Discord Developer Portal → Bot → Privileged Gateway Intents**: den **Message Content
+   Intent** einschalten. *Sobald `TWITCH_REDIRECT_URI` gesetzt ist, fordert der Bot ihn an —
+   ist er aus, scheitert der Login (`Used disallowed intents`) und der Container startet nicht.*
+5. **Kanal-Rechte** der Bot-Rolle: Kanal ansehen, Nachrichten senden, Webhooks verwalten,
+   Reaktionen hinzufügen, Nachrichtenverlauf lesen. Das Panel zeigt, was fehlt.
+6. Neu bauen: `docker compose up -d --build`.
+7. Panel → **Chat-Brücke** → **Mit Twitch verbinden**. Twitch zeigt an, als wer du angemeldet
+   bist — das muss der **Bot-Account** sein (sonst „Nicht du?").
+8. Kanal wählen, **Brücke aktiv** anhaken, speichern. Erst im Test-Kanal probieren; der
+   Kanalwechsel braucht keinen Neustart.
+
+Der Bot legt im Kanal einen Webhook „`BRAND_NAME` Chat-Brücke" an. Das Token des
+Bot-Accounts liegt in `data/twitch-bridge-token.json` (Rechte 600), erneuert sich selbst und
+wird bei **Trennen** widerrufen. Rechte: `user:read:chat`, `user:write:chat`,
+`user:read:moderated_channels`, `moderator:manage:chat_messages`.
+
+### Verhalten
+
+- **Nur Text.** Bilder, GIFs, Sticker und Anhänge werden nicht übertragen.
+- Lange Discord-Nachrichten werden in 500-Zeichen-Teile aufgeteilt (max. 5, jeder mit
+  Namens-Präfix). Zeilenumbrüche → Leerzeichen, Server-Emojis → `:name:`, Spoiler → `[Spoiler]`.
+- Twitch-Markdown wird in Discord entschärft (keine getarnten Links), Link-Vorschauen sind
+  aus. `@everyone`, `@here` und Rollen pingen nie.
+- `@Name` auf Twitch pingt eine Discord-Person nur, wenn sie in den letzten 2 Stunden im
+  Brücken-Kanal geschrieben hat. Echte Twitch-Erwähnungen (`@twitchuser`) pingen in Discord nie.
+- Antworten bleiben erhalten: Eine Discord-Antwort auf eine gespiegelte Nachricht wird eine
+  echte Twitch-Antwort, eine Twitch-Antwort auf eine Brücken-Nachricht erwähnt die Discord-Person.
+- Kein Echo: Bot-Nachrichten auf Twitch und Webhook-/Bot-Nachrichten in Discord werden nie
+  zurückgespiegelt. Im Shared Chat wird nur der eigene Kanal gespiegelt.
+
+### Moderation
+
+| Passiert | Folge |
+| --- | --- |
+| Twitch-Mod löscht eine Nachricht | Discord-Kopie wird gelöscht |
+| Ban / Timeout auf Twitch | Discord-Kopien der Person (seit Start) werden gelöscht |
+| Discord-Nachricht gelöscht | Twitch-Kopie wird gelöscht — nur wenn der Bot Mod ist |
+| Discord-Mod löscht eine gespiegelte Twitch-Nachricht | nur in Discord weg |
+| Twitch verwirft die Nachricht (AutoMod, Sperrbegriffe, Slow-Mode …) | 🚫-Reaktion in Discord |
+| Brücke konnte nicht senden (Warteschlange voll, Fehler) | ⚠️-Reaktion in Discord |
+
+Twitch-Bans gelten nicht in Discord — dort moderieren die Discord-Mods. Bearbeitungen und
+ein komplettes `/clear` werden nicht gespiegelt. Die Nachrichten-Zuordnung liegt nur im
+Speicher; nach einem Neustart lassen sich ältere Nachrichten nicht mehr synchron löschen.
+Log-Präfixe: `[brücke]` und `[twitch-auth]`; das Panel zeigt Verbindung, Zähler und letzten
+Fehler.
+
+## Tests
+
+```bash
+npm install && npm test
+```
+
+Testet die Text-Umwandlung der Brücke, den Twitch-Login und den kompletten Brücken-Ablauf
+gegen ein simuliertes Twitch und Discord (ohne Netzwerk) sowie die Brücken-API des Panels.
 
 ## White-label / Branding
 
